@@ -1,0 +1,26 @@
+[project]
+name = "truverse-agent"
+version = "0.1.0"
+description = "Truverse Agent - 电商对话 Agent"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain>=0.3",
+    "langchain-openai>=0.3",
+    "langgraph>=0.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-dotenv>=1.0",
+    "pillow>=10.0",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
