@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from langchain_core.tools import tool
-
-if TYPE_CHECKING:
-    pass
 
 # These will be injected at graph construction time
 _llm = None
@@ -53,7 +48,8 @@ def search_context(query: str, session_id: str = "") -> str:
     """从上下文知识库中搜索与查询相关的信息。"""
     if _context_manager is None:
         return "上下文管理器未初始化"
-    return _context_manager.get_context(session_id, query) or "未找到相关上下文信息"
+    context = _context_manager.get_context(session_id, query)
+    return context or "未找到相关上下文信息"
 
 
 @tool

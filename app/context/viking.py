@@ -1,69 +1,113 @@
 """OpenViking context management wrapper.
 
-OpenViking provides L0/L1/L2 layered context management.
-This module wraps it for use with the Agent's conversation and product data.
-
-NOTE: openviking is listed as a conceptual dependency. Until the package is
-available on PyPI, this module provides a stub implementation that stores
-context in-memory with a simple dict-based approach.
+Uses OpenViking (https://github.com/volcengine/OpenViking) for L0/L1/L2
+layered context management. Embedded mode, no server needed.
 """
 
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
-from dataclasses import dataclass, field
+
+import openviking as ov
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ContextEntry:
-    key: str
-    content: str
-    layer: str = "L0"  # L0=immediate, L1=session, L2=long-term
-    metadata: dict = field(default_factory=dict)
-
-
 class VikingContextManager:
-    """In-memory context manager following the OpenViking L0/L1/L2 pattern.
-
-    Replace internals with actual OpenViking client when available.
-    """
+    """OpenViking context manager using embedded mode with L0/L1/L2 layers."""
 
     def __init__(self, data_dir: str = "./data/viking") -> None:
         self._data_dir = data_dir
-        # layer -> list[ContextEntry]
-        self._store: dict[str, list[ContextEntry]] = defaultdict(list)
-        logger.info("VikingContextManager initialized (in-memory stub), data_dir=%s", data_dir)
+        self._client = ov.OpenViking(path=data_dir)
+        self._client.initialize()
+        self._sessions: dict[str, ov.Session] = {}
+        logger.info("VikingContextManager initialized, data_dir=%s", data_dir)
 
-    def add_resource(self, key: str, content: str, layer: str = "L0", metadata: dict | None = None) -> None:
-        entry = ContextEntry(key=key, content=content, layer=layer, metadata=metadata or {})
-        self._store[layer].append(entry)
+    def _get_session(self, session_id: str) -> ov.Session:
+        if session_id not in self._sessions:
+            self._sessions[session_id] = self._client.session(session_id)
+        return self._sessions[session_id]
 
-    def search(self, query: str, top_k: int = 5) -> list[ContextEntry]:
-        """Simple keyword search across all layers. Replace with vector search."""
-        results: list[ContextEntry] = []
-        query_lower = query.lower()
-        for entries in self._store.values():
-            for entry in entries:
-                if query_lower in entry.content.lower() or query_lower in entry.key.lower():
-                    results.append(entry)
-        return results[:top_k]
+    def add_resource(self, path: str, reason: str = "") -> dict:
+        """Add a URL, file, or directory as a resource."""
+        result = self._client.add_resource(path=path, reason=reason, wait=False)
+        logger.info("Added resource: %s", path)
+        return result
+
+    def wait_processed(self, timeout: int = 60) -> None:
+        """Wait for async semantic processing (L0/L1 generation) to finish."""
+        self._client.wait_processed(timeout=timeout)
+
+    def find(self, query: str, target_uri: str = "viking://resources/", limit: int = 5):
+        """Quick semantic search without session context."""
+        return self._client.find(query, target_uri=target_uri, limit=limit)
+
+    def search(self, query: str, session_id: str = "", limit: int = 5):
+        """Complex retrieval with intent analysis and session context."""
+        return self._client.search(query, session_id=session_id, limit=limit)
+
+    def read(self, uri: str) -> str:
+        """Read L2 full content of a resource."""
+        return self._client.read(uri)
+
+    def abstract(self, uri: str) -> str:
+        """Read L0 abstract (~100 tokens)."""
+        return self._client.abstract(uri)
+
+    def overview(self, uri: str) -> str:
+        """Read L1 overview (~2k tokens)."""
+        return self._client.overview(uri)
+
+    def add_message(self, session_id: str, role: str, content: str) -> None:
+        """Add a message to a session's conversation history."""
+        session = self._get_session(session_id)
+        session.add_message(role, content=content)
+
+    def commit_session(self, session_id: str) -> None:
+        """Commit session to archive conversation and extract memories."""
+        if session_id in self._sessions:
+            self._sessions[session_id].commit()
+            logger.info("Session %s committed", session_id)
 
     def get_context(self, session_id: str, query: str = "") -> str:
-        """Build context string from relevant entries for injection into prompts."""
+        """Build context string for prompt injection.
+
+        Uses progressive loading: L0 for relevance check, L1 for detail.
+        """
+        if not query:
+            return ""
+
         parts: list[str] = []
 
-        # L0: immediate context (always include recent for this session)
-        for entry in self._store.get("L0", []):
-            if entry.metadata.get("session_id") == session_id:
-                parts.append(entry.content)
+        # Search for relevant resources and memories
+        try:
+            if session_id:
+                results = self.search(query, session_id=session_id, limit=5)
+            else:
+                results = self.find(query, limit=5)
 
-        # L1/L2: search-based context
-        if query:
-            for entry in self.search(query):
-                if entry.content not in parts:
-                    parts.append(entry.content)
+            # Include resource overviews (L1) for top results
+            for r in results.resources[:3]:
+                try:
+                    overview = self.overview(r.uri)
+                    parts.append(f"[资源] {overview}")
+                except Exception:
+                    pass
 
-        return "\n".join(parts[-10:])  # limit context window
+            # Include memories
+            for m in results.memories[:3]:
+                try:
+                    content = self.read(m.uri)
+                    parts.append(f"[记忆] {content}")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("Context retrieval failed: %s", e)
+
+        return "\n".join(parts)
+
+    def close(self) -> None:
+        """Release resources."""
+        self._client.close()

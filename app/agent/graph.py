@@ -63,17 +63,17 @@ def _build_graph():
         images = state.get("images", [])
         messages = list(state["messages"])
 
-        # Inject context from OpenViking
+        # Extract last user message text
         last_user_msg = ""
         for msg in reversed(messages):
             if isinstance(msg, HumanMessage):
                 last_user_msg = msg.content if isinstance(msg.content, str) else str(msg.content)
                 break
 
+        # Inject context from OpenViking
         context = ctx_mgr.get_context(session_id, last_user_msg)
         system_prompt = SYSTEM_PROMPT.format(context=context)
 
-        # Build message list with system prompt
         full_messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
 
         # If there are images in this turn, modify the last user message to include them
@@ -85,7 +85,6 @@ def _build_graph():
                     for img_b64 in images:
                         url = img_b64 if img_b64.startswith("data:") else f"data:image/jpeg;base64,{img_b64}"
                         content.append({"type": "image_url", "image_url": {"url": url}})
-                    # Replace last user message with multimodal version
                     messages = messages[:i] + [HumanMessage(content=content)] + messages[i + 1:]
                     break
 
@@ -93,13 +92,9 @@ def _build_graph():
 
         response = await llm_with_tools.ainvoke(full_messages)
 
-        # Store conversation in context
-        ctx_mgr.add_resource(
-            key=f"conversation-{session_id}",
-            content=f"User: {last_user_msg}\nAssistant: {response.content}",
-            layer="L0",
-            metadata={"session_id": session_id},
-        )
+        # Store conversation in OpenViking session
+        ctx_mgr.add_message(session_id, "user", last_user_msg)
+        ctx_mgr.add_message(session_id, "assistant", response.content if isinstance(response.content, str) else str(response.content))
 
         return {"messages": [response]}
 
