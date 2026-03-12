@@ -1,4 +1,7 @@
-"""FastAPI application: routes and server entry point."""
+"""FastAPI 应用入口模块。
+
+提供 HTTP 路由和服务器启动配置，包括文本对话和多模态对话接口。
+"""
 
 from __future__ import annotations
 

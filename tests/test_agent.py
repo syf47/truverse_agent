@@ -1,4 +1,8 @@
-"""Basic tests for the Truverse Agent."""
+"""Truverse Agent 基础测试模块。
+
+覆盖健康检查接口、数据模型验证、Base64 编解码往返
+以及图片标注功能的单元测试。
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from app.schemas import ChatRequest, ChatResponse
 
 @pytest.mark.asyncio
 async def test_health():
+    """验证 /health 接口返回 200 和正确的状态信息。"""
     from app.main import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -23,12 +28,14 @@ async def test_health():
 
 
 def test_schema_chat_request():
+    """验证 ChatRequest 模型的字段默认值和必填项。"""
     req = ChatRequest(message="hello", session_id="s1")
     assert req.message == "hello"
     assert req.images is None
 
 
 def test_schema_chat_response():
+    """验证 ChatResponse 模型的字段默认值。"""
     resp = ChatResponse(reply="hi")
     assert resp.reply == "hi"
     assert resp.annotations == []
@@ -36,6 +43,7 @@ def test_schema_chat_response():
 
 
 def test_base64_roundtrip():
+    """验证 Base64 编码和解码的往返一致性。"""
     original = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
     encoded = encode_image_to_base64(original, "image/png")
     assert encoded.startswith("data:image/png;base64,")
@@ -44,7 +52,7 @@ def test_base64_roundtrip():
 
 
 def test_annotate_image():
-    """Test image annotation with Pillow."""
+    """验证 Pillow 图片标注功能的正确性。"""
     img = Image.new("RGB", (200, 200), color="white")
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
