@@ -35,6 +35,13 @@ SYSTEM_PROMPT = """你是 Truverse 电商数据分析助手，一个基于 ReAct
 
 {skills_context}
 
+## SQL 规范
+
+- **不要使用中文作为列别名**，只用英文别名，如 `AS total_count`
+- **不要在 SQL 末尾加分号**
+- **不要在一条 SQL 中写多条语句**，每次只执行一条 SELECT
+- 关联查询时注意类型匹配：wares.wareId (Int64) = comments.sku_id (Int64)，qa.item_id 是 String 需要用 toString()
+
 ## 上下文信息
 
 {context}

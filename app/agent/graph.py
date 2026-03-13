@@ -83,17 +83,21 @@ def _build_graph():
 
     recursion_limit 控制最大推理轮数，防止无限循环。
     """
-    llm = ChatOpenAI(
+    llm_kwargs = dict(
         model=settings.openai_model,
         api_key=settings.openai_api_key,
         temperature=0.3,
     )
+    if settings.openai_base_url:
+        llm_kwargs["base_url"] = settings.openai_base_url
+    llm = ChatOpenAI(**llm_kwargs)
 
     ctx_mgr = _get_context_manager()
     skill_mgr = _get_skill_manager()
     set_dependencies(llm, ctx_mgr)
 
-    skill_mgr.register_with_viking(ctx_mgr)
+    if ctx_mgr.available:
+        skill_mgr.register_with_viking(ctx_mgr)
 
     prompt_fn = _build_prompt(ctx_mgr, skill_mgr)
 
@@ -114,38 +118,27 @@ def get_graph():
     return _graph
 
 
+def _build_user_message(message: str, images: list[str] | None = None) -> HumanMessage:
+    """构建用户消息（支持图片）。"""
+    if images:
+        content: list[dict] = [{"type": "text", "text": message}]
+        for img_b64 in images:
+            url = img_b64 if img_b64.startswith("data:") else f"data:image/jpeg;base64,{img_b64}"
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        return HumanMessage(content=content)
+    return HumanMessage(content=message)
+
+
 async def run_agent(
     message: str,
     session_id: str,
     images: list[str] | None = None,
     recursion_limit: int = 25,
 ) -> str:
-    """运行 ReAct Agent 处理用户消息。
-
-    Agent 会在多轮 Thought/Action/Observation 循环中推理，
-    直到认为信息足够后给出最终回答。
-
-    Args:
-        message: 用户发送的文本消息。
-        session_id: 会话标识符。
-        images: Base64 编码的图片列表，可选。
-        recursion_limit: 最大推理轮数（每轮 = 1次 LLM + 1次 tool），默认 25。
-
-    Returns:
-        Agent 的最终文本回复。
-    """
+    """运行 ReAct Agent 处理用户消息（非流式）。"""
     graph = get_graph()
     ctx_mgr = _get_context_manager()
-
-    if images:
-        text_content = message
-        content = [{"type": "text", "text": text_content}]
-        for img_b64 in images:
-            url = img_b64 if img_b64.startswith("data:") else f"data:image/jpeg;base64,{img_b64}"
-            content.append({"type": "image_url", "image_url": {"url": url}})
-        user_message = HumanMessage(content=content)
-    else:
-        user_message = HumanMessage(content=message)
+    user_message = _build_user_message(message, images)
 
     ctx_mgr.add_message(session_id, "user", message)
 
@@ -158,5 +151,74 @@ async def run_agent(
     reply = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
 
     ctx_mgr.add_message(session_id, "assistant", reply)
-
+    ctx_mgr.commit_session(session_id)
     return reply
+
+
+async def stream_agent(
+    message: str,
+    session_id: str,
+    images: list[str] | None = None,
+    recursion_limit: int = 25,
+):
+    """运行 ReAct Agent 处理用户消息（流式输出）。
+
+    通过 astream_events 输出每个 token、工具调用、推理步骤。
+    Yields dict events: {"type": ..., "data": ...}
+    """
+    import json as _json
+
+    graph = get_graph()
+    ctx_mgr = _get_context_manager()
+    user_message = _build_user_message(message, images)
+
+    ctx_mgr.add_message(session_id, "user", message)
+
+    full_reply = ""
+
+    async for event in graph.astream_events(
+        {"messages": [user_message], "session_id": session_id},
+        config={"recursion_limit": recursion_limit},
+        version="v2",
+    ):
+        kind = event.get("event", "")
+        data = event.get("data", {})
+
+        if kind == "on_chat_model_stream":
+            chunk = data.get("chunk")
+            if chunk and hasattr(chunk, "content") and chunk.content:
+                content = chunk.content
+                if isinstance(content, str):
+                    full_reply += content
+                    yield {"type": "token", "data": content}
+
+        elif kind == "on_tool_start":
+            tool_name = event.get("name", "unknown")
+            tool_input = data.get("input", {})
+            yield {
+                "type": "tool_start",
+                "data": _json.dumps(
+                    {"tool": tool_name, "input": tool_input},
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            }
+
+        elif kind == "on_tool_end":
+            tool_name = event.get("name", "unknown")
+            output = data.get("output", "")
+            output_str = output.content if hasattr(output, "content") else str(output)
+            if len(output_str) > 2000:
+                output_str = output_str[:2000] + "...(truncated)"
+            yield {
+                "type": "tool_end",
+                "data": _json.dumps(
+                    {"tool": tool_name, "output": output_str},
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            }
+
+    ctx_mgr.add_message(session_id, "assistant", full_reply)
+    ctx_mgr.commit_session(session_id)
+    yield {"type": "done", "data": ""}

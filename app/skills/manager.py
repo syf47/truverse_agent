@@ -104,7 +104,7 @@ class SkillManager:
                         logger.warning("Failed to register skill '%s' with Viking: %s", skill.name, e)
 
         try:
-            viking_ctx.wait_processed(timeout=30)
+            viking_ctx.wait_processed(timeout=120)
             self._viking_ready = True
             logger.info("All skills registered and indexed in OpenViking")
         except Exception as e:

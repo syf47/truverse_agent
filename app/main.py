@@ -1,17 +1,18 @@
 """FastAPI 应用入口模块。
 
-提供 HTTP 路由和服务器启动配置，包括文本对话和多模态对话接口。
+提供 HTTP 路由和服务器启动配置，包括文本对话、多模态对话和流式对话接口。
 """
 
 from __future__ import annotations
 
-import base64
+import json
 import logging
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-from app.agent.graph import run_agent
+from app.agent.graph import run_agent, stream_agent
 from app.agent.multimodal import encode_image_to_base64
 from app.schemas import ChatRequest, ChatResponse
 
@@ -41,6 +42,37 @@ async def chat(req: ChatRequest):
         images=req.images,
     )
     return ChatResponse(reply=reply, metadata={"session_id": req.session_id})
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """流式对话接口，通过 SSE（Server-Sent Events）逐步返回推理过程和回答。
+
+    Event types:
+    - token: LLM 输出的文本 token
+    - tool_start: 开始调用工具（含工具名和输入）
+    - tool_end: 工具返回结果（含工具名和输出）
+    - done: 流结束
+    """
+
+    async def event_generator():
+        async for event in stream_agent(
+            message=req.message,
+            session_id=req.session_id,
+            images=req.images,
+        ):
+            payload = json.dumps(event, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/chat/multimodal", response_model=ChatResponse)

@@ -12,7 +12,10 @@ async def ocr_image(image_base64: str) -> str:
     """对图片进行 OCR 文字提取。输入为 Base64 编码的图片。"""
     from app.agent.multimodal import ocr_with_vision
 
-    return await ocr_with_vision(get_llm(), image_base64)
+    try:
+        return await ocr_with_vision(get_llm(), image_base64)
+    except Exception as e:
+        return f"OCR 处理失败: {e}。当前模型可能不支持图片输入，请确认使用支持 vision 的模型。"
 
 
 @tool
@@ -20,7 +23,10 @@ async def analyze_image(image_base64: str) -> str:
     """分析图片中的商品信息，包括类别、颜色、品牌、风格等。输入为 Base64 编码的图片。"""
     from app.agent.multimodal import analyze_image_with_vision
 
-    return await analyze_image_with_vision(get_llm(), image_base64)
+    try:
+        return await analyze_image_with_vision(get_llm(), image_base64)
+    except Exception as e:
+        return f"图片分析失败: {e}。当前模型可能不支持图片输入，请确认使用支持 vision 的模型。"
 
 
 @tool

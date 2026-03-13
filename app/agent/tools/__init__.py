@@ -12,10 +12,15 @@ from app.agent.tools.analytics_tools import (
     monitor_price,
 )
 from app.agent.tools.base import set_dependencies
+from app.agent.tools.clickhouse_tools import describe_table, execute_sql, list_tables
 from app.agent.tools.image_tools import analyze_image, annotate_image, ocr_image
-from app.agent.tools.search_tools import query_products, search_context, search_knowledge
+from app.agent.tools.search_tools import search_context, search_knowledge
 
 ALL_TOOLS = [
+    # ClickHouse 数据查询
+    execute_sql,
+    list_tables,
+    describe_table,
     # 图片类
     ocr_image,
     analyze_image,
@@ -23,7 +28,6 @@ ALL_TOOLS = [
     # 搜索 & 知识检索
     search_context,
     search_knowledge,
-    query_products,
     # 行业数据分析 API
     get_industry_trends,
     analyze_competitors,

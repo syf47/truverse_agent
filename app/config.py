@@ -26,11 +26,17 @@ class Settings:
     """
 
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    openai_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", ""))
     openai_model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o"))
     viking_data_dir: str = field(default_factory=lambda: os.getenv("VIKING_DATA_DIR", "./data/viking"))
     skills_dir: str = field(default_factory=lambda: os.getenv("SKILLS_DIR", "./skills"))
     analytics_api_base: str = field(default_factory=lambda: os.getenv("ANALYTICS_API_BASE", "https://api.example.com/v1"))
     analytics_api_key: str = field(default_factory=lambda: os.getenv("ANALYTICS_API_KEY", ""))
+    ck_host: str = field(default_factory=lambda: os.getenv("CK_HOST", "localhost"))
+    ck_port: int = field(default_factory=lambda: int(os.getenv("CK_PORT", "18123")))
+    ck_user: str = field(default_factory=lambda: os.getenv("CK_USER", "syf"))
+    ck_password: str = field(default_factory=lambda: os.getenv("CK_PASSWORD", "123456"))
+    ck_database: str = field(default_factory=lambda: os.getenv("CK_DATABASE", "default"))
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8000")))
 
