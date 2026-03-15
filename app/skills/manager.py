@@ -1,9 +1,9 @@
 """Skills 管理模块。
 
-扫描 skills/ 目录，加载 skill.yaml 配置和 context.md 内容。
+扫描 skills/ 目录，加载 SKILL.md（frontmatter + markdown body）。
 支持两种检索模式：
 1. 关键词匹配（默认回退）
-2. OpenViking 语义检索（skill 内容注入 Viking 后，通过语义搜索匹配）
+2. OpenViking skill-scoped 语义检索（通过 add_skill() 注入 Viking）
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ class Skill:
 
     name: str
     description: str
-    trigger_keywords: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     context: str = ""
     path: Path = field(default_factory=lambda: Path("."))
 
@@ -31,8 +31,9 @@ class Skill:
 class SkillManager:
     """Skills 管理器，负责加载和检索 skills。
 
-    支持将 skill 内容注入 OpenViking 以获得语义检索能力，
-    同时保留关键词匹配作为回退策略。
+    使用 SKILL.md 格式（YAML frontmatter + markdown body），
+    通过 OpenViking add_skill() 注入以获得 skill-scoped 语义检索，
+    保留关键词匹配作为回退策略。
     """
 
     def __init__(self, skills_dir: str = "./skills") -> None:
@@ -51,57 +52,73 @@ class SkillManager:
         for child in sorted(self._skills_dir.iterdir()):
             if not child.is_dir():
                 continue
-            config_path = child / "skill.yaml"
-            if not config_path.exists():
+            skill_md = child / "SKILL.md"
+            if not skill_md.exists():
                 continue
             try:
-                self._load_skill(child, config_path)
+                self._load_skill(child, skill_md)
             except Exception as e:
                 logger.warning("Failed to load skill from %s: %s", child, e)
 
-    def _load_skill(self, skill_dir: Path, config_path: Path) -> None:
-        """加载单个 skill 的配置和上下文内容。"""
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
+    def _load_skill(self, skill_dir: Path, skill_md: Path) -> None:
+        """加载单个 skill 的 SKILL.md（frontmatter + body）。"""
+        raw = skill_md.read_text(encoding="utf-8")
 
-        name = config.get("name", skill_dir.name)
-        description = config.get("description", "")
-        trigger_keywords = config.get("trigger_keywords", [])
+        # Parse YAML frontmatter between --- delimiters
+        frontmatter, body = self._parse_frontmatter(raw)
 
-        context = ""
-        context_path = skill_dir / "context.md"
-        if context_path.exists():
-            context = context_path.read_text(encoding="utf-8")
+        name = frontmatter.get("name", skill_dir.name)
+        description = frontmatter.get("description", "")
+        tags = frontmatter.get("tags", [])
 
         skill = Skill(
             name=name,
             description=description,
-            trigger_keywords=trigger_keywords,
-            context=context,
+            tags=tags,
+            context=body.strip(),
             path=skill_dir,
         )
         self._skills[name] = skill
-        logger.info("Loaded skill: %s (%d keywords)", name, len(trigger_keywords))
+        logger.info("Loaded skill: %s (%d tags)", name, len(tags))
+
+    @staticmethod
+    def _parse_frontmatter(text: str) -> tuple[dict, str]:
+        """解析 SKILL.md 的 YAML frontmatter 和 markdown body。"""
+        if not text.startswith("---"):
+            return {}, text
+
+        # Find the closing ---
+        end = text.find("---", 3)
+        if end == -1:
+            return {}, text
+
+        fm_raw = text[3:end]
+        body = text[end + 3:]
+
+        try:
+            fm = yaml.safe_load(fm_raw) or {}
+        except yaml.YAMLError:
+            fm = {}
+
+        return fm, body
 
     def register_with_viking(self, viking_ctx) -> None:
-        """将所有 skill 的 context.md 注入 OpenViking 进行语义索引。
+        """将所有 skill 目录通过 add_skill() 注入 OpenViking。
 
         Args:
             viking_ctx: VikingContextManager 实例。
         """
         self._viking = viking_ctx
         for skill in self._skills.values():
-            if skill.context and skill.path:
-                context_path = skill.path / "context.md"
-                if context_path.exists():
-                    try:
-                        viking_ctx.add_resource(
-                            path=str(context_path.resolve()),
-                            reason=f"Skill context: {skill.name} - {skill.description}",
-                        )
-                        logger.info("Registered skill '%s' with OpenViking", skill.name)
-                    except Exception as e:
-                        logger.warning("Failed to register skill '%s' with Viking: %s", skill.name, e)
+            if skill.path:
+                try:
+                    viking_ctx.add_skill(
+                        path=str(skill.path.resolve()),
+                        wait=False,
+                    )
+                    logger.info("Registered skill '%s' with OpenViking", skill.name)
+                except Exception as e:
+                    logger.warning("Failed to register skill '%s' with Viking: %s", skill.name, e)
 
         try:
             viking_ctx.wait_processed(timeout=120)
@@ -112,14 +129,14 @@ class SkillManager:
             self._viking_ready = False
 
     def match(self, query: str, top_k: int = 3) -> list[Skill]:
-        """根据用户查询匹配相关 skills（关键词方式）。"""
+        """根据用户查询匹配相关 skills（关键词方式，使用 tags）。"""
         if not query:
             return []
 
         scored: list[tuple[int, Skill]] = []
         query_lower = query.lower()
         for skill in self._skills.values():
-            hits = sum(1 for kw in skill.trigger_keywords if kw.lower() in query_lower)
+            hits = sum(1 for tag in skill.tags if tag.lower() in query_lower)
             if hits > 0:
                 scored.append((hits, skill))
 
@@ -129,7 +146,7 @@ class SkillManager:
     def get_context_for_query(self, query: str, top_k: int = 3) -> str:
         """获取与用户查询相关的 skill 上下文。
 
-        优先使用 OpenViking 语义检索，如未就绪则回退到关键词匹配。
+        优先使用 OpenViking skill-scoped 语义检索，如未就绪则回退到关键词匹配。
         """
         if not query:
             return ""
@@ -140,9 +157,13 @@ class SkillManager:
         return self._get_context_via_keywords(query, top_k)
 
     def _get_context_via_viking(self, query: str, top_k: int) -> str:
-        """通过 OpenViking 语义检索获取 skill 上下文。"""
+        """通过 OpenViking skill-scoped 语义检索获取 skill 上下文。"""
         try:
-            results = self._viking.find(query, limit=top_k)
+            results = self._viking.find(
+                query,
+                target_uri="viking://agent/skills",
+                limit=top_k,
+            )
             parts = []
             for r in results.resources[:top_k]:
                 try:
@@ -173,7 +194,7 @@ class SkillManager:
     def list_skills(self) -> list[dict]:
         """列出所有已加载的 skills 摘要信息。"""
         return [
-            {"name": s.name, "description": s.description, "keywords": s.trigger_keywords}
+            {"name": s.name, "description": s.description, "tags": s.tags}
             for s in self._skills.values()
         ]
 

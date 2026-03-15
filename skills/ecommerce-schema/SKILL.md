@@ -1,3 +1,36 @@
+---
+name: jd-clickhouse-schema
+description: >
+  京东电商 ClickHouse 数据库表结构。包含商品表(wares)、评论表(comments)、问答表(qa)
+  三张核心表的完整字段定义、关联关系、分区策略和常用查询模式。
+  当 Agent 需要构造 SQL 查询、分析商品数据、评论数据、问答数据时使用。
+tags:
+  - 商品
+  - 评论
+  - 问答
+  - 查询
+  - SQL
+  - ClickHouse
+  - SKU
+  - SPU
+  - 评分
+  - 评价
+  - 价格
+  - 品牌
+  - 类目
+  - 库存
+  - wareId
+  - sku_id
+  - comment
+  - wares
+  - 表结构
+  - 数据库
+  - 晒单
+  - 回复
+  - 提问
+  - 回答
+---
+
 # 京东电商 ClickHouse 数据库表结构
 
 > 表名中的 `1000000266` 是店铺 ID（shopId），实际使用时按需替换。
@@ -28,8 +61,8 @@ jd_{shopId}_qa (问答表)
 
 ## 1. jd_{shopId}_wares — 京东商品数据表
 
-**引擎**: MergeTree  
-**分区**: toYYYYMM(createTime)  
+**引擎**: MergeTree
+**分区**: toYYYYMM(createTime)
 **排序键**: (wareId, updateTime)
 
 ### 核心字段
@@ -121,9 +154,9 @@ jd_{shopId}_qa (问答表)
 
 ## 2. jd_{shopId}_comments — 京东商品评价表
 
-**引擎**: MergeTree  
-**分区**: toYYYYMM(create_time)  
-**排序键**: (sku_id, create_time, comment_id)  
+**引擎**: MergeTree
+**分区**: toYYYYMM(create_time)
+**排序键**: (sku_id, create_time, comment_id)
 **TTL**: create_time + 365天
 
 ### 核心字段
@@ -173,8 +206,8 @@ jd_{shopId}_qa (问答表)
 
 ## 3. jd_{shopId}_qa — 京东商品用户问答表
 
-**引擎**: MergeTree  
-**分区**: toYYYYMM(question_time)  
+**引擎**: MergeTree
+**分区**: toYYYYMM(question_time)
 **排序键**: (item_id, question_id, answer_id)
 
 > **重要**: 每行存储一条**回答**，问题信息冗余存储。同一 question_id 可能有多行（多个回答）。

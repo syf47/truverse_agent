@@ -63,6 +63,14 @@ class VikingContextManager:
         logger.info("Added resource: %s", path)
         return result
 
+    def add_skill(self, path: str, wait: bool = False) -> dict:
+        if not self._available:
+            logger.debug("Skipping add_skill (in-memory mode): %s", path)
+            return {}
+        result = self._client.add_skill(path, wait=wait)
+        logger.info("Added skill: %s", path)
+        return result
+
     def wait_processed(self, timeout: int = 60) -> None:
         if not self._available:
             return
