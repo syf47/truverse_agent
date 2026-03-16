@@ -11,6 +11,11 @@ from collections import defaultdict
 
 from app.config import settings
 
+try:
+    from openviking_cli.utils import run_async as _run_async
+except ImportError:
+    _run_async = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +57,15 @@ class VikingContextManager:
         if not self._available:
             return None
         if session_id not in self._sessions:
-            self._sessions[session_id] = self._client.session(session_id)
+            sess = self._client.session(session_id)
+            # Load persisted messages from disk so cached session has full history
+            # (important after server restart; safe to fail on brand-new sessions)
+            if _run_async:
+                try:
+                    _run_async(sess.load())
+                except Exception:
+                    pass
+            self._sessions[session_id] = sess
         return self._sessions[session_id]
 
     def add_resource(self, path: str, reason: str = "") -> dict:
@@ -113,6 +126,30 @@ class VikingContextManager:
             if len(msgs) > self._max_memory:
                 self._memory_messages[session_id] = msgs[-self._max_memory:]
 
+    def get_history_messages(self, session_id: str, max_messages: int = 20) -> list[dict]:
+        """返回 session 最近的对话历史，格式为 [{role, content}, ...]。
+
+        供 LangGraph 将历史消息拼入 messages 数组，实现跨请求对话连续性。
+        注意：返回的是当前请求新消息加入前的历史，不含本轮 user 消息。
+        """
+        if self._available:
+            session = self._get_session(session_id)
+            if session and session.messages:
+                # exclude the last message which is the current user message
+                # (already added via add_message before this call)
+                history = session.messages[:-1]
+                return [
+                    {"role": m.role, "content": m.content}
+                    for m in history[-max_messages:]
+                    if m.content
+                ]
+        else:
+            msgs = self._memory_messages.get(session_id, [])
+            # exclude last (current user msg)
+            history = msgs[:-1]
+            return history[-max_messages:]
+        return []
+
     def commit_session(self, session_id: str) -> None:
         if self._available and session_id in self._sessions:
             self._sessions[session_id].commit()
@@ -130,6 +167,7 @@ class VikingContextManager:
     def _get_context_viking(self, session_id: str, query: str) -> str:
         parts: list[str] = []
         try:
+            # Vector retrieval — long-term memories and resources relevant to query
             if session_id:
                 results = self.search(query, session_id=session_id, limit=5)
             else:
@@ -138,20 +176,22 @@ class VikingContextManager:
             for r in results.resources[:3]:
                 try:
                     overview = self.overview(r.uri)
-                    parts.append(f"[资源] {overview}")
+                    if overview:
+                        parts.append(f"[资源] {overview}")
                 except Exception:
                     pass
 
             for m in results.memories[:3]:
                 try:
                     content = self.read(m.uri)
-                    parts.append(f"[记忆] {content}")
+                    if content:
+                        parts.append(f"[记忆] {content}")
                 except Exception:
                     pass
         except Exception as e:
             logger.warning("Context retrieval failed: %s", e)
 
-        return "\n".join(parts)
+        return "\n\n".join(parts)
 
     def _get_context_memory(self, session_id: str) -> str:
         """内存模式：返回最近几轮对话作为上下文。"""

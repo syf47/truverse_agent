@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
@@ -118,6 +118,21 @@ def get_graph():
     return _graph
 
 
+def _build_history_messages(history: list[dict]) -> list[BaseMessage]:
+    """把 Viking session 历史 [{role, content}] 转成 LangChain 消息列表。"""
+    msgs: list[BaseMessage] = []
+    for item in history:
+        role = item.get("role", "")
+        content = item.get("content", "")
+        if not content:
+            continue
+        if role == "user":
+            msgs.append(HumanMessage(content=content))
+        elif role == "assistant":
+            msgs.append(AIMessage(content=content))
+    return msgs
+
+
 def _build_user_message(message: str, images: list[str] | None = None) -> HumanMessage:
     """构建用户消息（支持图片）。"""
     if images:
@@ -142,8 +157,10 @@ async def run_agent(
 
     ctx_mgr.add_message(session_id, "user", message)
 
+    history = _build_history_messages(ctx_mgr.get_history_messages(session_id))
+
     result = await graph.ainvoke(
-        {"messages": [user_message], "session_id": session_id},
+        {"messages": history + [user_message], "session_id": session_id},
         config={"recursion_limit": recursion_limit},
     )
 
@@ -151,7 +168,6 @@ async def run_agent(
     reply = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
 
     ctx_mgr.add_message(session_id, "assistant", reply)
-    ctx_mgr.commit_session(session_id)
     return reply
 
 
@@ -174,10 +190,11 @@ async def stream_agent(
 
     ctx_mgr.add_message(session_id, "user", message)
 
+    history = _build_history_messages(ctx_mgr.get_history_messages(session_id))
     full_reply = ""
 
     async for event in graph.astream_events(
-        {"messages": [user_message], "session_id": session_id},
+        {"messages": history + [user_message], "session_id": session_id},
         config={"recursion_limit": recursion_limit},
         version="v2",
     ):
@@ -220,5 +237,4 @@ async def stream_agent(
             }
 
     ctx_mgr.add_message(session_id, "assistant", full_reply)
-    ctx_mgr.commit_session(session_id)
     yield {"type": "done", "data": ""}
