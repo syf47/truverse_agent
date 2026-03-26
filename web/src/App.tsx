@@ -15,6 +15,22 @@ interface MessageItem {
   tools?: ToolEvent[]
 }
 
+interface DeskAuditResult {
+  passed: boolean
+  score: number
+  threshold: number
+  summary: string
+  issues: string[]
+  suggestions: string[]
+  reference_mode: string
+}
+
+interface DeskAuditReferenceStatus {
+  configured: boolean
+  filename?: string | null
+  updated_at?: number | null
+}
+
 const SESSION_ID = crypto.randomUUID?.() ?? `s-${Date.now()}`
 
 function ToolCallBlock({ tool, collapsed: initCollapsed }: { tool: ToolEvent; collapsed?: boolean }) {
@@ -48,30 +64,158 @@ function ThinkingIndicator() {
   )
 }
 
+function formatUpdatedAt(timestamp?: number | null) {
+  if (!timestamp) return '未保存'
+  return new Date(timestamp * 1000).toLocaleString()
+}
+
 export default function App() {
   const [messages, setMessages] = useState<MessageItem[]>([])
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
   const [currentTools, setCurrentTools] = useState<ToolEvent[]>([])
   const [streamingText, setStreamingText] = useState('')
+
+  const [referenceFile, setReferenceFile] = useState<File | null>(null)
+  const [referencePreview, setReferencePreview] = useState('')
+  const [referenceSaving, setReferenceSaving] = useState(false)
+  const [referenceStatus, setReferenceStatus] = useState<DeskAuditReferenceStatus | null>(null)
+
+  const [auditFile, setAuditFile] = useState<File | null>(null)
+  const [auditPreview, setAuditPreview] = useState('')
+  const [auditNotes, setAuditNotes] = useState('')
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [auditError, setAuditError] = useState('')
+  const [auditResult, setAuditResult] = useState<DeskAuditResult | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const referenceInputRef = useRef<HTMLInputElement>(null)
+  const auditInputRef = useRef<HTMLInputElement>(null)
+
+  const fetchReferenceStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/audit/desk-cleanliness/reference')
+      if (!res.ok) return
+      const data = await res.json() as DeskAuditReferenceStatus
+      setReferenceStatus(data)
+    } catch {
+      // ignore bootstrap status failures
+    }
+  }, [])
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
   useEffect(() => {
+    fetchReferenceStatus()
+  }, [fetchReferenceStatus])
+
+  useEffect(() => {
     scrollToBottom()
   }, [messages, streamingText, currentTools, scrollToBottom])
+
+  useEffect(() => {
+    if (!referenceFile) {
+      setReferencePreview('')
+      return
+    }
+    const url = URL.createObjectURL(referenceFile)
+    setReferencePreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [referenceFile])
+
+  useEffect(() => {
+    if (!auditFile) {
+      setAuditPreview('')
+      return
+    }
+    const url = URL.createObjectURL(auditFile)
+    setAuditPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [auditFile])
+
+  const parseError = async (res: Response) => {
+    try {
+      const data = await res.json()
+      return data.detail ?? `HTTP ${res.status}`
+    } catch {
+      return `HTTP ${res.status}`
+    }
+  }
+
+  const handleSaveReference = async () => {
+    if (!referenceFile || referenceSaving) return
+
+    setReferenceSaving(true)
+    setAuditError('')
+
+    try {
+      const form = new FormData()
+      form.append('reference_image', referenceFile)
+
+      const res = await fetch('/api/audit/desk-cleanliness/reference', {
+        method: 'POST',
+        body: form,
+      })
+
+      if (!res.ok) {
+        throw new Error(await parseError(res))
+      }
+
+      const data = await res.json() as DeskAuditReferenceStatus
+      setReferenceStatus(data)
+      setReferenceFile(null)
+      if (referenceInputRef.current) {
+        referenceInputRef.current.value = ''
+      }
+    } catch (err) {
+      setAuditError(`保存参考图失败: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setReferenceSaving(false)
+    }
+  }
+
+  const handleAuditSubmit = async () => {
+    if (!auditFile || auditLoading) return
+
+    setAuditLoading(true)
+    setAuditError('')
+    setAuditResult(null)
+
+    try {
+      const form = new FormData()
+      form.append('submitted_image', auditFile)
+      if (auditNotes.trim()) {
+        form.append('notes', auditNotes.trim())
+      }
+
+      const res = await fetch('/api/audit/desk-cleanliness', {
+        method: 'POST',
+        body: form,
+      })
+
+      if (!res.ok) {
+        throw new Error(await parseError(res))
+      }
+
+      const data = await res.json() as DeskAuditResult
+      setAuditResult(data)
+    } catch (err) {
+      setAuditError(`审核失败: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setAuditLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const msg = input.trim()
-    if (!msg || loading) return
+    if (!msg || chatLoading) return
 
     setInput('')
-    setLoading(true)
+    setChatLoading(true)
     setStreamingText('')
     setCurrentTools([])
 
@@ -126,8 +270,6 @@ export default function App() {
                 tools[idx] = { ...tools[idx], output: info.output }
                 setCurrentTools([...tools])
               }
-            } else if (evt.type === 'done') {
-              // stream finished
             }
           } catch {
             // skip malformed event
@@ -145,7 +287,7 @@ export default function App() {
         { role: 'assistant', content: `请求失败: ${err instanceof Error ? err.message : String(err)}` },
       ])
     } finally {
-      setLoading(false)
+      setChatLoading(false)
       setStreamingText('')
       setCurrentTools([])
     }
@@ -167,16 +309,127 @@ export default function App() {
     <div className="app">
       <header className="header">
         <h1>Truverse Agent</h1>
-        <span>ReAct + ClickHouse</span>
+        <span>ReAct + ClickHouse + Vision Audit</span>
       </header>
 
+      <section className="audit-panel">
+        <div className="panel-title-row">
+          <div>
+            <h2>桌面清洁审核</h2>
+            <p>先保存一张干净桌面的标准图，之后员工只需上传待审核照片。</p>
+          </div>
+          <div className={`reference-badge ${referenceStatus?.configured ? 'ready' : 'missing'}`}>
+            {referenceStatus?.configured ? '已保存参考图' : '未保存参考图'}
+          </div>
+        </div>
+
+        <div className="panel-grid">
+          <div className="upload-card">
+            <h3>1. 保存标准参考图</h3>
+            <p>推荐上传干净整洁、拍摄角度稳定的桌面照片。</p>
+            <input
+              ref={referenceInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => setReferenceFile(e.target.files?.[0] ?? null)}
+            />
+            {referencePreview && (
+              <img className="preview-image" src={referencePreview} alt="参考图预览" />
+            )}
+            <button
+              className="action-button"
+              type="button"
+              onClick={handleSaveReference}
+              disabled={!referenceFile || referenceSaving}
+            >
+              {referenceSaving ? '保存中...' : '保存为参考图'}
+            </button>
+            <div className="upload-meta">
+              <span>当前文件：{referenceStatus?.filename ?? '暂无'}</span>
+              <span>更新时间：{formatUpdatedAt(referenceStatus?.updated_at)}</span>
+            </div>
+          </div>
+
+          <div className="upload-card">
+            <h3>2. 上传员工照片审核</h3>
+            <p>系统会默认拿已保存的参考图进行对比，并输出不卫生点。</p>
+            <input
+              ref={auditInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => setAuditFile(e.target.files?.[0] ?? null)}
+            />
+            {auditPreview && (
+              <img className="preview-image" src={auditPreview} alt="待审核图片预览" />
+            )}
+            <textarea
+              className="audit-textarea"
+              value={auditNotes}
+              onChange={(e) => setAuditNotes(e.target.value)}
+              placeholder="可选：补充说明，例如拍摄位置、门店编号等"
+              rows={3}
+            />
+            <button
+              className="action-button"
+              type="button"
+              onClick={handleAuditSubmit}
+              disabled={!auditFile || auditLoading || !referenceStatus?.configured}
+            >
+              {auditLoading ? '审核中...' : '开始审核'}
+            </button>
+          </div>
+        </div>
+
+        {auditError && (
+          <div className="audit-error">{auditError}</div>
+        )}
+
+        {auditResult && (
+          <div className={`audit-result ${auditResult.passed ? 'passed' : 'failed'}`}>
+            <div className="audit-result-header">
+              <div>
+                <div className="audit-result-title">
+                  {auditResult.passed ? '审核通过' : '审核不通过'}
+                </div>
+                <p>{auditResult.summary}</p>
+              </div>
+              <div className="audit-score">
+                <strong>{auditResult.score}</strong>
+                <span>/ {auditResult.threshold}</span>
+              </div>
+            </div>
+
+            {auditResult.issues.length > 0 && (
+              <div className="audit-result-block">
+                <h4>问题点</h4>
+                <ul>
+                  {auditResult.issues.map((issue, index) => (
+                    <li key={`${issue}-${index}`}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {auditResult.suggestions.length > 0 && (
+              <div className="audit-result-block">
+                <h4>建议</h4>
+                <ul>
+                  {auditResult.suggestions.map((suggestion, index) => (
+                    <li key={`${suggestion}-${index}`}>{suggestion}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
       <div className="messages">
-        {messages.length === 0 && !loading && (
+        {messages.length === 0 && !chatLoading && (
           <div className="empty-state">
             <h2>Truverse 电商数据分析助手</h2>
             <p>
-              基于 ReAct 多轮推理，可以直接查询 ClickHouse 数据库。
-              试试问「帮我分析店铺商品的评分分布」或「查看所有在售商品」
+              上方可以做桌面清洁审核，下方仍然可以继续通过对话分析 ClickHouse 数据和电商业务问题。
             </p>
           </div>
         )}
@@ -197,7 +450,7 @@ export default function App() {
           </div>
         ))}
 
-        {loading && (
+        {chatLoading && (
           <div className="message">
             <div className="message-role assistant">助手</div>
             {currentTools.map((t, j) => (
@@ -230,10 +483,10 @@ export default function App() {
             onKeyDown={handleKeyDown}
             placeholder="输入问题... (Enter 发送, Shift+Enter 换行)"
             rows={1}
-            disabled={loading}
+            disabled={chatLoading}
           />
-          <button type="submit" disabled={loading || !input.trim()}>
-            {loading ? '分析中...' : '发送'}
+          <button type="submit" disabled={chatLoading || !input.trim()}>
+            {chatLoading ? '分析中...' : '发送'}
           </button>
         </form>
       </div>

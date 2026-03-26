@@ -1,7 +1,7 @@
 {
     "CollectionName": "context",
     "IndexName": "default",
-    "UpdateTimeStamp": 1773313316000419000,
+    "UpdateTimeStamp": 1773812732147552000,
     "ScalarIndex": [
         {
             "FieldName": "account_id",
@@ -54,7 +54,7 @@
     ],
     "VectorIndex": {
         "IndexType": "flat",
-        "ElementCount": 47,
+        "ElementCount": 51,
         "MaxElementCount": 63,
         "Dimension": 1536,
         "Distance": "ip",

@@ -37,6 +37,9 @@ class Settings:
     ck_user: str = field(default_factory=lambda: os.getenv("CK_USER", "syf"))
     ck_password: str = field(default_factory=lambda: os.getenv("CK_PASSWORD", "123456"))
     ck_database: str = field(default_factory=lambda: os.getenv("CK_DATABASE", "default"))
+    desk_audit_model: str = field(default_factory=lambda: os.getenv("DESK_AUDIT_MODEL", os.getenv("OPENAI_MODEL", "gpt-4o")))
+    desk_audit_reference_image: str = field(default_factory=lambda: os.getenv("DESK_AUDIT_REFERENCE_IMAGE", ""))
+    desk_audit_pass_score: int = field(default_factory=lambda: int(os.getenv("DESK_AUDIT_PASS_SCORE", "80")))
     host: str = field(default_factory=lambda: os.getenv("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(os.getenv("PORT", "8000")))
 

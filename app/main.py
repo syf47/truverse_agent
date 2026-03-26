@@ -8,13 +8,24 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from app.agent.desk_audit import (
+    DeskAuditError,
+    analyze_desk_cleanliness,
+    get_reference_image_status,
+    save_reference_image,
+)
 from app.agent.graph import run_agent, stream_agent
 from app.agent.multimodal import encode_image_to_base64
-from app.schemas import ChatRequest, ChatResponse
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    DeskAuditReferenceResponse,
+    DeskAuditResponse,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -96,6 +107,43 @@ async def chat_multimodal(
         reply=reply,
         metadata={"session_id": session_id, "images_count": len(image_b64_list)},
     )
+
+
+@app.post("/audit/desk-cleanliness", response_model=DeskAuditResponse)
+async def audit_desk_cleanliness(
+    submitted_image: UploadFile = File(...),
+    reference_image: UploadFile | None = File(default=None),
+    notes: str = Form(default=""),
+):
+    submitted_bytes = await submitted_image.read()
+    reference_bytes = await reference_image.read() if reference_image else None
+
+    try:
+        return await analyze_desk_cleanliness(
+            submitted_image=submitted_bytes,
+            submitted_media_type=submitted_image.content_type or "image/jpeg",
+            reference_image=reference_bytes,
+            reference_media_type=reference_image.content_type if reference_image else None,
+            notes=notes,
+        )
+    except DeskAuditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/audit/desk-cleanliness/reference", response_model=DeskAuditReferenceResponse)
+async def audit_reference_status():
+    return get_reference_image_status()
+
+
+@app.post("/audit/desk-cleanliness/reference", response_model=DeskAuditReferenceResponse)
+async def upload_audit_reference(
+    reference_image: UploadFile = File(...),
+):
+    reference_bytes = await reference_image.read()
+    try:
+        return save_reference_image(reference_bytes)
+    except DeskAuditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":

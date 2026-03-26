@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -46,3 +48,29 @@ class ChatResponse(BaseModel):
     reply: str
     annotations: list[AnnotationInfo] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+
+
+class DeskAuditResponse(BaseModel):
+    """桌面清洁审核响应。"""
+
+    passed: bool
+    score: int = Field(description="清洁评分，0 到 100")
+    threshold: int = Field(description="通过阈值")
+    summary: str
+    issues: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    reference_mode: str = Field(default="configured", description="参考图来源：configured 或 uploaded")
+
+
+class DeskAuditReferenceResponse(BaseModel):
+    """桌面清洁审核参考图状态。"""
+
+    configured: bool
+    filename: str | None = None
+    updated_at: float | None = Field(default=None, description="Unix 时间戳")
+
+    @property
+    def updated_at_display(self) -> str | None:
+        if self.updated_at is None:
+            return None
+        return datetime.fromtimestamp(self.updated_at).isoformat()
