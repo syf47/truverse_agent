@@ -27,6 +27,29 @@ class DeskAuditError(Exception):
     """桌面清洁审核异常。"""
 
 
+_ANNOTATION_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+]
+
+_FAILURE_ANNOTATION_CATEGORIES = {
+    "stain",
+    "spill",
+    "debris",
+    "extra_object",
+    "clutter",
+    "object_misaligned",
+    "object_rotated",
+    "object_not_returned",
+    "missing_object",
+    "placement_issue",
+}
+
+
 def _get_reference_image_path() -> Path:
     raw_path = settings.desk_audit_reference_image.strip() or "./data/reference/desk_clean_baseline.jpg"
     path = Path(raw_path).expanduser()
@@ -114,6 +137,30 @@ def _normalize_lines(value: object) -> list[str]:
     return normalized
 
 
+def _normalize_dimension_scores(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: dict[str, int] = {}
+    for raw_key, raw_score in value.items():
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        normalized[key] = _normalize_score(raw_score)
+    return normalized
+
+
+def _load_annotation_font(font_size: int):
+    for font_path in _ANNOTATION_FONT_CANDIDATES:
+        if not Path(font_path).exists():
+            continue
+        try:
+            return ImageFont.truetype(font_path, font_size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
+
+
 def _normalize_box(box: object, width: int, height: int) -> list[int]:
     if not isinstance(box, (list, tuple)) or len(box) != 4:
         return []
@@ -163,6 +210,7 @@ def _normalize_issue_annotations(
             continue
 
         label = str(item.get("label") or item.get("title") or "").strip()
+        category = str(item.get("category") or item.get("type") or item.get("kind") or "unknown").strip() or "unknown"
         detail = str(item.get("detail") or item.get("description") or "").strip() or None
         box = _normalize_box(item.get("box"), width, height)
 
@@ -174,6 +222,7 @@ def _normalize_issue_annotations(
         normalized.append(
             DeskAuditIssueAnnotation(
                 label=label,
+                category=category,
                 detail=detail,
                 box=box,
             )
@@ -199,11 +248,7 @@ def _annotate_audit_image(
     stroke_width = max(3, min(width, height) // 150)
     label_padding_x = max(8, stroke_width * 2)
     label_padding_y = max(4, stroke_width)
-
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", max(18, min(width, height) // 28))
-    except (OSError, IOError):
-        font = ImageFont.load_default()
+    font = _load_annotation_font(max(18, min(width, height) // 28))
 
     for issue in boxed_issues:
         x1, y1, x2, y2 = issue.box
@@ -247,6 +292,7 @@ def _annotate_audit_image(
 def _build_handling_advice(
     passed: bool,
     summary: str,
+    dimension_scores: dict[str, int],
     issues: list[str],
     suggestions: list[str],
     issue_annotations: list[DeskAuditIssueAnnotation],
@@ -272,10 +318,12 @@ def _build_handling_advice(
         "score": score,
         "threshold": threshold,
         "summary": summary,
+        "dimension_scores": dimension_scores,
         "issue_count": len(issues),
         "issues": issues,
         "suggestions": suggestions,
         "annotated_issue_count": len([item for item in issue_annotations if len(item.box) == 4]),
+        "issue_categories": [item.category for item in issue_annotations],
         "next_step": "直接通过" if passed else "处理问题后重新提交审核",
     }
     return advice, handling_json
@@ -302,28 +350,52 @@ def _build_audit_prompt(notes: str = "") -> str:
 2. 待审核图：员工清洁后拍摄的桌面
 
 审核规则：
+- 这个审核的标准不是“只有干净”，而是“干净 + 整齐 + 物归原位”
 - 重点检查桌面/桌垫区域是否存在新增的污渍、水渍、液体残留、纸屑、灰尘堆积、明显杂物
-- 忽略轻微的拍摄角度差异、光线差异，以及键盘/鼠标等固定办公物品的小幅位置变化
+- 同时检查参考图中已有物品的摆放还原度，包括位置、角度、朝向、与桌边或相邻物体的相对关系
+- 如果同一物品在待审核图中仍然存在，但明显发生了位移、旋转、歪斜、没有摆回参考位置，也判定为不通过
+- 只忽略整张照片带来的轻微拍摄角度差异和光线差异，不要因为这些整体误差漏掉物品摆放异常
 - 如果出现明显液体残留、污渍、未清理干净的痕迹，应判定为不通过
+- 如果键盘、鼠标、鼠标垫、卡片、桌面固定陈列物等与参考图相比摆放明显不一致，也应判定为不通过
+- 如果耳机盒、支架、充电器、卡片、小摆件等参考图中已存在的物品在待审核图里明显摆乱、偏移、歪斜、遮挡关系变化，也应判定为不通过
 - 评分范围是 0 到 100，80 分及以上且没有明显卫生问题才算通过
-- 问题描述必须用中文，尽量指出位置，比如“桌垫中央偏左有水渍残留”
+- 问题描述必须用中文，尽量指出位置，比如“桌垫中央偏左有水渍残留”或“键盘角度与参考图不一致”
+
+请先在心里按下面步骤完成比对，再输出 JSON：
+1. 先识别参考图中的关键物品及其基准摆放状态，例如耳机盒、支架、键盘、鼠标、鼠标垫、卡片、线材、小摆件
+2. 再逐一检查待审核图中这些物品是否仍在、是否摆回原位、角度是否一致、与桌边和相邻物体的相对位置是否一致
+3. 最后再检查污渍、水渍、纸屑、额外杂物和整体凌乱度
+4. 如果“干净”但“不整齐”或“没有物归原位”，依然要判定为不通过
+5. 对于通过判定要谨慎，只有在明显接近参考图的清洁度和摆放状态时才通过
 
 请只返回 JSON，不要带 markdown 代码块，也不要输出额外说明，格式如下：
 {{
   "passed": true,
   "score": 92,
   "summary": "桌面整体较干净，达到参考图标准。",
+  "dimension_scores": {{
+    "cleanliness": 95,
+    "tidiness": 92,
+    "placement_consistency": 93
+  }},
   "issues": [],
   "suggestions": [],
   "issue_annotations": []
 }}
 
+dimension_scores 规则：
+- cleanliness: 污渍、水渍、灰尘、杂物残留情况
+- tidiness: 整体整齐度、是否显得凌乱
+- placement_consistency: 与参考图中物品摆放位置、角度、朝向的一致性
+- 只要 tidiness 或 placement_consistency 明显偏低，就不应判定为通过
+
 issue_annotations 规则：
 - 每个元素表示一个不卫生点
-- 字段格式为 {{"label":"简短标签","detail":"详细说明","box":[x1,y1,x2,y2]}}
+- 字段格式为 {{"label":"简短标签","category":"问题类型","detail":"详细说明","box":[x1,y1,x2,y2]}}
+- category 可用值示例：stain、spill、debris、extra_object、clutter、object_misaligned、object_rotated、object_not_returned、missing_object、placement_issue
 - box 是相对于待审核图的归一化坐标，范围 0 到 1000
 - 如果没有明确问题点，issue_annotations 返回空数组
-- 如果发现明显污渍、水渍、纸屑等，请尽量给出对应 box
+- 如果发现明显污渍、水渍、纸屑、物品摆放错位、角度异常等，请尽量给出对应 box
 {extra_notes}
 """
 
@@ -375,11 +447,11 @@ async def analyze_desk_cleanliness(
     score = _normalize_score(payload.get("score", 0))
     threshold = settings.desk_audit_pass_score
     model_passed = bool(payload.get("passed", False))
-    passed = model_passed and score >= threshold
 
     with Image.open(BytesIO(submitted_image)) as img:
         width, height = img.size
 
+    dimension_scores = _normalize_dimension_scores(payload.get("dimension_scores") or payload.get("scores"))
     issues = _normalize_lines(payload.get("issues"))
     suggestions = _normalize_lines(payload.get("suggestions"))
     issue_annotations = _normalize_issue_annotations(
@@ -388,12 +460,26 @@ async def analyze_desk_cleanliness(
         height=height,
     )
 
+    placement_score = dimension_scores.get("placement_consistency", 100)
+    tidiness_score = dimension_scores.get("tidiness", 100)
+    has_blocking_annotation = any(
+        issue.category in _FAILURE_ANNOTATION_CATEGORIES
+        for issue in issue_annotations
+    )
+    passed = (
+        model_passed
+        and score >= threshold
+        and placement_score >= threshold
+        and tidiness_score >= threshold
+        and not has_blocking_annotation
+    )
+
     summary = str(payload.get("summary", "")).strip()
     if not summary:
         summary = (
             "桌面整体清洁情况符合标准。"
             if passed
-            else "桌面与参考图存在明显清洁差异，建议重新擦拭后再提交。"
+            else "桌面与参考图存在明显清洁差异，建议重新擦拭并整理后再提交。"
         )
 
     if not passed and not issues:
@@ -409,6 +495,7 @@ async def analyze_desk_cleanliness(
     handling_advice, handling_advice_json = _build_handling_advice(
         passed=passed,
         summary=summary,
+        dimension_scores=dimension_scores,
         issues=issues,
         suggestions=suggestions,
         issue_annotations=issue_annotations,
@@ -421,6 +508,7 @@ async def analyze_desk_cleanliness(
         score=score,
         threshold=threshold,
         summary=summary,
+        dimension_scores=dimension_scores,
         issues=issues,
         suggestions=suggestions,
         handling_advice=handling_advice,

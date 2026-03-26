@@ -57,6 +57,7 @@ class DeskAuditResponse(BaseModel):
     score: int = Field(description="清洁评分，0 到 100")
     threshold: int = Field(description="通过阈值")
     summary: str
+    dimension_scores: dict[str, int] = Field(default_factory=dict, description="分项评分，如 cleanliness/tidiness/placement_consistency")
     issues: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
     handling_advice: str = Field(default="", description="问题处理说明")
@@ -70,6 +71,7 @@ class DeskAuditIssueAnnotation(BaseModel):
     """桌面清洁问题标注信息。"""
 
     label: str
+    category: str = "unknown"
     detail: str | None = None
     box: list[int] = Field(default_factory=list, description="像素坐标 [x1, y1, x2, y2]")
 
