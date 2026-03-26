@@ -59,7 +59,19 @@ class DeskAuditResponse(BaseModel):
     summary: str
     issues: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
+    handling_advice: str = Field(default="", description="问题处理说明")
+    handling_advice_json: dict = Field(default_factory=dict, description="结构化问题处理说明")
+    issue_annotations: list["DeskAuditIssueAnnotation"] = Field(default_factory=list)
+    annotated_image_base64: str | None = Field(default=None, description="后端已标记问题区域的图片")
     reference_mode: str = Field(default="configured", description="参考图来源：configured 或 uploaded")
+
+
+class DeskAuditIssueAnnotation(BaseModel):
+    """桌面清洁问题标注信息。"""
+
+    label: str
+    detail: str | None = None
+    box: list[int] = Field(default_factory=list, description="像素坐标 [x1, y1, x2, y2]")
 
 
 class DeskAuditReferenceResponse(BaseModel):

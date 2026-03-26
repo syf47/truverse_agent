@@ -13,7 +13,13 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from app.agent.multimodal import annotate_image, decode_base64_image, encode_image_to_base64
-from app.schemas import ChatRequest, ChatResponse, DeskAuditReferenceResponse, DeskAuditResponse
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    DeskAuditIssueAnnotation,
+    DeskAuditReferenceResponse,
+    DeskAuditResponse,
+)
 
 
 @pytest.mark.asyncio
@@ -79,6 +85,21 @@ async def test_desk_audit_endpoint(monkeypatch):
             summary="桌垫区域存在水渍残留。",
             issues=["桌垫中央偏左存在明显液体残留"],
             suggestions=["重新擦拭桌垫后再提交"],
+            handling_advice="当前桌面审核未通过，请先擦拭桌垫中央偏左的水渍后重新提交。",
+            handling_advice_json={
+                "status": "failed",
+                "score": 72,
+                "threshold": 80,
+                "next_step": "处理问题后重新提交审核",
+            },
+            issue_annotations=[
+                DeskAuditIssueAnnotation(
+                    label="水渍残留",
+                    detail="桌垫中央偏左存在明显液体残留",
+                    box=[10, 20, 120, 180],
+                )
+            ],
+            annotated_image_base64="data:image/jpeg;base64,ZmFrZQ==",
             reference_mode="configured",
         )
 
@@ -94,6 +115,10 @@ async def test_desk_audit_endpoint(monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["passed"] is False
     assert resp.json()["issues"] == ["桌垫中央偏左存在明显液体残留"]
+    assert resp.json()["handling_advice"].startswith("当前桌面审核未通过")
+    assert resp.json()["handling_advice_json"]["status"] == "failed"
+    assert resp.json()["issue_annotations"][0]["label"] == "水渍残留"
+    assert resp.json()["annotated_image_base64"].startswith("data:image/jpeg;base64,")
 
 
 @pytest.mark.asyncio

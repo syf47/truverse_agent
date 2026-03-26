@@ -1,10 +1,10 @@
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  min-height: 100vh;
   max-width: 1040px;
   margin: 0 auto;
-  padding: 0 16px;
+  padding: 0 16px 24px;
 }
 
 /* Header */
@@ -234,16 +234,43 @@
   margin-bottom: 8px;
 }
 
+.audit-advice {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.annotated-image {
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+}
+
 .audit-result-block ul {
   padding-left: 18px;
   color: var(--text-secondary);
   line-height: 1.7;
 }
 
+.audit-json {
+  margin: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
 /* Messages area */
 .messages {
   flex: 1;
-  overflow-y: auto;
+  overflow: visible;
   padding: 20px 0;
   scroll-behavior: smooth;
 }

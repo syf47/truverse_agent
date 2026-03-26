@@ -22,7 +22,17 @@ interface DeskAuditResult {
   summary: string
   issues: string[]
   suggestions: string[]
+  handling_advice: string
+  handling_advice_json: Record<string, unknown>
+  issue_annotations: DeskAuditIssueAnnotation[]
+  annotated_image_base64?: string | null
   reference_mode: string
+}
+
+interface DeskAuditIssueAnnotation {
+  label: string
+  detail?: string | null
+  box: number[]
 }
 
 interface DeskAuditReferenceStatus {
@@ -399,12 +409,43 @@ export default function App() {
               </div>
             </div>
 
+            {auditResult.annotated_image_base64 && (
+              <div className="audit-result-block">
+                <h4>问题标记图</h4>
+                <img
+                  className="annotated-image"
+                  src={auditResult.annotated_image_base64}
+                  alt="审核问题标记图"
+                />
+              </div>
+            )}
+
             {auditResult.issues.length > 0 && (
               <div className="audit-result-block">
                 <h4>问题点</h4>
                 <ul>
                   {auditResult.issues.map((issue, index) => (
                     <li key={`${issue}-${index}`}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {auditResult.handling_advice && (
+              <div className="audit-result-block">
+                <h4>处理说明</h4>
+                <p className="audit-advice">{auditResult.handling_advice}</p>
+              </div>
+            )}
+
+            {auditResult.issue_annotations.length > 0 && (
+              <div className="audit-result-block">
+                <h4>定位说明</h4>
+                <ul>
+                  {auditResult.issue_annotations.map((issue, index) => (
+                    <li key={`${issue.label}-${index}`}>
+                      {issue.detail || issue.label}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -420,6 +461,13 @@ export default function App() {
                 </ul>
               </div>
             )}
+
+            <div className="audit-result-block">
+              <h4>处理说明(JSON)</h4>
+              <pre className="audit-json">
+                <code>{JSON.stringify(auditResult.handling_advice_json, null, 2)}</code>
+              </pre>
+            </div>
           </div>
         )}
       </section>
